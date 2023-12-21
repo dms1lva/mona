@@ -3,7 +3,7 @@
  
 U{Corelan<https://www.corelan.be>}
 
-Copyright (c) 2011-2022, Peter Van Eeckhoutte - Corelan Consulting bv
+Copyright (c) 2011-2023, Peter Van Eeckhoutte - Corelan Consulting bv
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -28,12 +28,12 @@ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
 STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY 
 WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-$Revision: 624 $
-$Id: mona.py 624 2022-10-29 16:49:00Z corelanc0d3r $ 
+$Revision: 635 $
+$Id: mona.py 635 2023-10-22 14:49:00Z corelanc0d3r $ 
 """
 
 __VERSION__ = '2.0'
-__REV__ = filter(str.isdigit, '$Revision: 624 $')
+__REV__ = filter(str.isdigit, '$Revision: 635 $')
 __IMM__ = '1.8'
 __DEBUGGERAPP__ = ''
 arch = 32
@@ -2672,12 +2672,12 @@ class MnModule:
 	Class to access module properties
 	"""
 	def __init__(self, modulename):
-		#dbg.log("MnModule(%s)" % modulename)
 		modisaslr = True
 		modissafeseh = True
 		modrebased = True
 		modisnx = True
 		modisos = True
+		modiscfg = True		
 		self.IAT = {}
 		self.EAT = {}
 		path = ""
@@ -2688,6 +2688,7 @@ class MnModule:
 		mcodesize = 0
 		mcodetop = 0
 		mentry = 0
+		mdllcharacteristics = 0
 		mversion = ""
 		self.internalname = modulename
 		if modulename != "":
@@ -2698,6 +2699,7 @@ class MnModule:
 				modrebased = getModuleProperty(modulename,"rebase")
 				modisnx = getModuleProperty(modulename,"nx")
 				modisos = getModuleProperty(modulename,"os")
+				modiscfg = getModuleProperty(modulename,"cfg")
 				path = getModuleProperty(modulename,"path")
 				mzbase = getModuleProperty(modulename,"base")
 				mzsize = getModuleProperty(modulename,"size")
@@ -2707,6 +2709,7 @@ class MnModule:
 				mcodebase = getModuleProperty(modulename,"codebase")
 				mcodesize = getModuleProperty(modulename,"codesize")
 				mcodetop = getModuleProperty(modulename,"codetop")
+				mdllcharacteristics = getModuleProperty(modulename, "dllcharacteristics")
 			else:
 				#gather info manually - this code should only get called from populateModuleInfo()
 				self.moduleobj = dbg.getModule(modulename)
@@ -2715,6 +2718,7 @@ class MnModule:
 				modisnx = True
 				modrebased = False
 				modisos = False
+				modiscfg = False
 				#if self.moduleobj == None:
 				#	dbg.log("*** Error - self.moduleobj is None, key %s" % modulename, highlight=1)
 				mod       = self.moduleobj
@@ -2726,7 +2730,7 @@ class MnModule:
 				mcodebase = mod.getCodebase()
 				mcodesize = mod.getCodesize()
 				mcodetop  = mcodebase + mcodesize
-				
+				mdllcharacteristics = 0
 				mversion=mversion.replace(", ",".")
 				mversionfields=mversion.split('(')
 				mversion=mversionfields[0].replace(" ","")
@@ -2773,15 +2777,27 @@ class MnModule:
 								else:
 									modissafeseh=False
 				
+					# IMAGE_DLL_CHARACTERISTICS FIELD
+					# Sits at offset 0x5e in Optional Header
+					dll_characteristics_flags=struct.unpack('<H',dbg.readMemory(pebase+0x5e,2))[0]
+					mdllcharacteristics = dll_characteristics_flags
+					#dbg.log("%s: Flags: 0x%x" % (path, dll_characteristics_flags))
 					#aslr
-					if (flags&0x0040)==0:  # 'IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE
+					if (dll_characteristics_flags&0x0040)==0:
 						modisaslr=False
 					#nx
 					if (flags&0x0100)==0:
 						modisnx=False
+					#cfg
+					if (dll_characteristics_flags&0x4000)==0:
+						modiscfg=False
+					else:
+						modiscfg=True
 					#rebase
 					if mzrebase != mzbase:
 						modrebased=True
+		
+
 		else:
 			# should never be hit
 			#print "No module specified !!!"
@@ -2811,6 +2827,8 @@ class MnModule:
 		self.isNX = modisnx
 		
 		self.isOS = modisos
+
+		self.isCFG = modiscfg
 		
 		self.moduleKey = modulename
 	
@@ -2831,6 +2849,8 @@ class MnModule:
 		self.moduleCodetop = mcodetop
 		
 		self.moduleCodebase = mcodebase
+
+		self.moduleDllCharacteristics = mdllcharacteristics
 		
 			
 	
@@ -2848,7 +2868,7 @@ class MnModule:
 		"""			
 		outstring = ""
 		if self.moduleKey != "":
-			outstring = "[" + self.moduleKey + "] ASLR: " + str(self.isAslr) + ", Rebase: " + str(self.isRebase) + ", SafeSEH: " + str(self.isSafeSEH) + ", OS: " + str(self.isOS) + ", v" + self.moduleVersion + " (" + self.modulePath + ")"
+			outstring = "[" + self.moduleKey + "] ASLR: " + str(self.isAslr) + ", Rebase: " + str(self.isRebase) + ", SafeSEH: " + str(self.isSafeSEH) + ", CFG: " + str(self.isCFG) +  ", OS: " + str(self.isOS) + ", v" + self.moduleVersion + " (" + self.modulePath + "), 0x%x" % self.moduleDllCharacteristics 
 		else:
 			outstring = "[None]"
 		return outstring
@@ -2864,6 +2884,9 @@ class MnModule:
 		
 	def isOS(self):
 		return self.isOS
+
+	def isCFG(self):
+		return self.isCFG
 	
 	def isNX(self):
 		return self.isNX
@@ -2897,6 +2920,9 @@ class MnModule:
 		
 	def moduleVersion(self):
 		return self.moduleVersion
+
+	def moduleDllCharacteristics(self):
+		return self.moduleDllCharacteristics
 		
 	def isExcluded(self):
 		return self.isExcluded
@@ -2907,6 +2933,7 @@ class MnModule:
 		sequences.append(["call","\xff\x15"])
 		funccalls = searchInRange(sequences, self.moduleBase, self.moduleTop,criteria)
 		return funccalls
+
 		
 	def getIAT(self):
 		IAT = {}
@@ -5727,6 +5754,8 @@ def getModulesToQuery(criteria):
 			if ("os" in criteria) and ((not criteria["os"]) and thismod.isOS):
 				included = False
 			if ("nx" in criteria) and ((not criteria["nx"]) and thismod.isNX):
+				included = False
+			if ("cfg" in criteria) and ((not criteria["cfg"]) and thismod.isCFG):
 				included = False				
 		else:
 			included = False
@@ -5837,11 +5866,13 @@ def populateModuleInfo():
 			modinfo["rebase"]	= thismod.isRebase
 			modinfo["version"]	= thismod.moduleVersion
 			modinfo["os"]		= thismod.isOS
+			modinfo["cfg"]		= thismod.isCFG
 			modinfo["name"]		= key
 			modinfo["entry"]	= thismod.moduleEntry
 			modinfo["codebase"]	= thismod.moduleCodebase
 			modinfo["codesize"]	= thismod.moduleCodesize
 			modinfo["codetop"]	= thismod.moduleCodetop
+			modinfo["dllcharacteristics"]  = thismod.moduleDllCharacteristics
 			g_modules[thismod.moduleKey] = modinfo
 		else:
 			if not silent:
@@ -5880,14 +5911,14 @@ def showModuleTable(logfile="", modules=[]):
 	thistable = ""
 	if len(g_modules) == 0:
 		populateModuleInfo()
-	thistable += "-----------------------------------------------------------------------------------------------------------------------------------------\n"
+	thistable += "----------------------------------------------------------------------------------------------------------------------------------------------\n"
 	thistable += " Module info :\n"
-	thistable += "-----------------------------------------------------------------------------------------------------------------------------------------\n"
+	thistable += "----------------------------------------------------------------------------------------------------------------------------------------------\n"
 	if arch == 32:
-		thistable += " Base       | Top        | Size       | Rebase | SafeSEH | ASLR  | NXCompat | OS Dll | Version, Modulename & Path\n"
+		thistable += " Base       | Top        | Size       | Rebase | SafeSEH | ASLR  | CFG   | NXCompat | OS Dll | Version, Modulename & Path, DLLCharacteristics\n"
 	elif arch == 64:
-		thistable += " Base               | Top                | Size               | Rebase | SafeSEH | ASLR  | NXCompat | OS Dll | Version, Modulename & Path\n"
-	thistable += "-----------------------------------------------------------------------------------------------------------------------------------------\n"
+		thistable += " Base               | Top                | Size               | Rebase | SafeSEH | ASLR  | CFG   | NXCompat | OS Dll | Version, Modulename & Path, DLLCharacteristics\n"
+	thistable += "----------------------------------------------------------------------------------------------------------------------------------------------\n"
 
 	for thismodule,modproperties in g_modules.iteritems():
 		if (len(modules) > 0 and modproperties["name"] in modules or len(logfile)>0):
@@ -5897,12 +5928,14 @@ def showModuleTable(logfile="", modules=[]):
 			size 	= toSize(str("0x" + toHex(modproperties["size"])),10)
 			safeseh = toSize(str(modproperties["safeseh"]),7)
 			aslr 	= toSize(str(modproperties["aslr"]),5)
+			cfg 	= toSize(str(modproperties["cfg"]),5)
 			nx 		= toSize(str(modproperties["nx"]),7)
 			isos 	= toSize(str(modproperties["os"]),7)
 			version = str(modproperties["version"])
 			path 	= str(modproperties["path"])
 			name	= str(modproperties["name"])
-			thistable += " " + base + " | " + top + " | " + size + " | " + rebase +"| " +safeseh + " | " + aslr + " |  " + nx + " | " + isos + "| " + version + " [" + name + "] (" + path + ")\n"
+			dllflag = "0x%x" % modproperties["dllcharacteristics"]
+			thistable += " " + base + " | " + top + " | " + size + " | " + rebase +"| " +safeseh + " | " + aslr + " | "+ cfg + " |  " + nx + " | " + isos + "| " + version + " [" + name + "] (" + path + ") " + dllflag + "\n"
 	thistable += "-----------------------------------------------------------------------------------------------------------------------------------------\n"
 	tableinfo = thistable.split('\n')
 	if logfile == "":
@@ -6588,16 +6621,19 @@ def findROPGADGETS(modulecriteria={},criteria={},endings=[],maxoffset=40,depth=5
 	thislog = logfile.reset()	
 	objprogressfile.write("Writing " + str(len(stackpivots)+len(stackpivots_safeseh))+" stackpivots with minimum offset " + str(pivotdistance)+" to file " + thislog,progressfile)
 	dbg.log("[+] Writing stackpivots to file " + thislog)
-	logfile.write("Stack pivots, minimum distance " + str(pivotdistance),thislog)
-	logfile.write("-------------------------------------",thislog)
+	logfile.write("Stack pivots, minimum distance " + str(pivotdistance) + ", in descending order",thislog)
+	logfile.write("------------------------------------------------------------------------------",thislog)
+	logfile.write("", thislog)
+	logfile.write("", thislog)	
 	logfile.write("Non-SafeSEH protected pivots :",thislog)
 	logfile.write("------------------------------",thislog)
+	logfile.write("", thislog)	
 	arrtowrite = ""	
 	pivotcount = 0
 	try:
 		with open(thislog,"a") as fh:
 			arrtowrite = ""
-			stackpivots_index = sorted(stackpivots) # returns sorted keys as an array
+			stackpivots_index = sorted(stackpivots, reverse=True) # returns sorted keys as an array, in descending order
 			for sdist in stackpivots_index:
 				for spivot, schain in stackpivots[sdist]:
 					ptrx = MnPointer(spivot)
@@ -6611,15 +6647,19 @@ def findROPGADGETS(modulecriteria={},criteria={},endings=[],maxoffset=40,depth=5
 		pass
 	logfile.write("", thislog)
 	logfile.write("", thislog)
-	logfile.write("", thislog)
+	logfile.write("", thislog)	
+	logfile.write("**********************************************************************************************************", thislog)
+	logfile.write("", thislog)		
+	logfile.write("", thislog)	
 	logfile.write("", thislog)		
 	logfile.write("SafeSEH protected pivots :",thislog)
 	logfile.write("--------------------------",thislog)	
+	logfile.write("", thislog)	
 	arrtowrite = ""	
 	try:
 		with open(thislog, "a") as fh:
 			arrtowrite = ""
-			stackpivots_safeseh_index = sorted(stackpivots_safeseh)
+			stackpivots_safeseh_index = sorted(stackpivots_safeseh, reverse=True)
 			for sdist in stackpivots_safeseh_index:
 				for spivot, schain in stackpivots_safeseh[sdist]:
 					ptrx = MnPointer(spivot)
@@ -11069,6 +11109,7 @@ def goFindMSP(distance = 0,args = {}):
 	#2. registers overwritten ?
 	if not silent:
 		dbg.log("[+] Examining registers")
+	tofile += "\n[+] Examining registers\n"
 	registers = {}
 	registers_to = {}
 	for reg in regs:
@@ -11162,7 +11203,7 @@ def goFindMSP(distance = 0,args = {}):
 	seh = {}
 	if not silent:
 		dbg.log("[+] Examining SEH chain")
-	tofile += "[+] Examining SEH chain\r\n"
+	tofile += "\n[+] Examining SEH chain\n"
 	thissehchain=dbg.getSehChain()
 	
 	for chainentry in thissehchain:
@@ -11226,7 +11267,7 @@ def goFindMSP(distance = 0,args = {}):
 			else:
 				extratxt = "(+- "+str(distance)+" bytes)"
 			dbg.log("[+] Examining stack %s - looking for cyclic pattern" % extratxt)
-		tofile += "[+] Examining stack %s - looking for cyclic pattern\n" % extratxt
+		tofile += "\n[+] Examining stack %s - looking for cyclic pattern\n" % extratxt
 		
 		# get stack this address belongs to
 		stacks = getStacks()
@@ -11327,7 +11368,7 @@ def goFindMSP(distance = 0,args = {}):
 			else:
 				extratxt = "(+- "+str(distance)+" bytes)"
 			dbg.log("[+] Examining stack %s - looking for pointers to cyclic pattern" % extratxt)	
-		tofile += "[+] Examining stack %s - looking for pointers to cyclic pattern\n" % extratxt
+		tofile += "\n[+] Examining stack %s - looking for pointers to cyclic pattern\n" % extratxt
 		# get stack this address belongs to
 		stacks = getStacks()
 		thisstackbase = 0
@@ -11749,7 +11790,7 @@ def main(args):
 			bannertext += "    |    _____ ___  ____  ____  ____ _                                 |\n"
 			bannertext += "    |    / __ `__ \/ __ \/ __ \/ __ `/  https://www.corelan.be         |\n"
 			bannertext += "    |   / / / / / / /_/ / / / / /_/ /  https://www.corelan-training.com|\n"
-			bannertext += "    |  /_/ /_/ /_/\____/_/ /_/\__,_/  #corelan (Freenode IRC)          |\n"
+			bannertext += "    |  /_/ /_/ /_/\____/_/ /_/\__,_/                                   |\n"
 			bannertext += "    |                                                                  |\n"
 			bannertext += "    |------------------------------------------------------------------|\n"
 			banners[2] = bannertext
